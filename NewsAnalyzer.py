@@ -15,7 +15,7 @@ SERP_API_KEY = "634d579412ea5ba702d111093b7d128bc38174537cd09a5dd209ddf9576a7c7b
 # Company name
 # -----------------------------
 
-company = "Adani Enterprises"
+company = "Coal India"
 
 # -----------------------------
 # Fetch News from Google
