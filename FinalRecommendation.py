@@ -1,12 +1,14 @@
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from sklearn.ensemble import RandomForestRegressor
+import time
 
-# -------------------------------
-# Pull scores from analyzer modules
-# -------------------------------
 
-def _get_score(module_names, attr_candidates, default):
-    # allow a single module name or a list of possible module names
+def _import_and_get_score(module_names, attr_candidates, default):
+    """Import one of module_names (string or list) and return the first matching attribute value.
+
+    Returns a tuple: (module_name_used_or_None, value_or_None, error_or_None)
+    """
     if isinstance(module_names, str):
         module_names = [module_names]
 
@@ -19,92 +21,128 @@ def _get_score(module_names, attr_candidates, default):
         for attr in attr_candidates:
             if hasattr(mod, attr):
                 try:
-                    return float(getattr(mod, attr))
-                except Exception:
-                    continue
+                    return (module_name, float(getattr(mod, attr)), None)
+                except Exception as e:
+                    return (module_name, None, f"attribute '{attr}' found but conversion failed: {e}")
 
-        print(f"Warning: {module_name} has no attributes {attr_candidates}; trying next module if available")
+        return (module_name, None, f"no attributes {attr_candidates} in module")
 
-    print(f"Warning: couldn't import any of {module_names}; using default {default}")
-    return float(default)
+    return (None, None, f"couldn't import any of {module_names}")
 
-# try to read scores from existing analyzer modules; fall back to sensible defaults
-graph_score = _get_score('GraphAnalyzer', ['trend_score', 'graph_score', 'final_score', 'score'], 8.0)
-profile_score = _get_score('CompanyProfileAnalyzer', ['final_score', 'profile_score', 'company_score', 'score'], 7.9)
-# support both the provided filename and possible alternate names
-market_score = _get_score(['PriceAndMarketDataAnalyzer', 'PeiceAndMarketDataAnalyzer', 'MarketAnalyzer'], ['score', 'market_score', 'final_score'], 6.5)
-valuation_score = _get_score(['ValuationMetricsAnalyzer', 'ValuationAnalyzer'], ['score', 'valuation_score', 'final_score'], 7.3)
-news_score = _get_score('NewsAnalyzer', ['news_score', 'sentiment_score', 'final_score', 'score'], 5.9)
 
-# -------------------------------
-# Feature Vector
-# -------------------------------
+def _collect_scores(specs, timeout_per=180):
+    scores = {}
+    errors = {}
+    with ProcessPoolExecutor(max_workers=len(specs)) as ex:
+        future_to_spec = {
+            ex.submit(_import_and_get_score, spec['modules'], spec['attrs'], spec['default']): spec
+            for spec in specs
+        }
 
-X_input = np.array([
-    graph_score,
-    profile_score,
-    market_score,
-    valuation_score,
-    news_score
-]).reshape(1,-1)
+        for future in as_completed(future_to_spec):
+            spec = future_to_spec[future]
+            name = spec['name']
+            try:
+                module_name, value, error = future.result(timeout=timeout_per)
+            except Exception as e:
+                module_name, value, error = (None, None, f"Execution error: {e}")
 
-# -------------------------------
-# Training Data (synthetic)
-# -------------------------------
+            if value is not None:
+                scores[name] = value
+                print(f"{spec['name']} score from {module_name}: {value}")
+            else:
+                scores[name] = float(spec['default'])
+                errors[name] = error
+                print(f"Warning: {spec['name']} failed ({error}); using default {spec['default']}")
 
-np.random.seed(42)
+    return scores, errors
 
-X_train = np.random.uniform(1,10,(500,5))
 
-# weighted target generation
-y_train = (
-    0.30 * X_train[:,0] +
-    0.20 * X_train[:,1] +
-    0.15 * X_train[:,2] +
-    0.20 * X_train[:,3] +
-    0.15 * X_train[:,4]
-)
+def _compute_final_score(scores):
+    X_input = np.array([
+        scores['Graph'],
+        scores['Profile'],
+        scores['PriceMarket'],
+        scores['Valuation'],
+        scores['News']
+    ]).reshape(1, -1)
 
-# -------------------------------
-# Train ML Model
-# -------------------------------
+    np.random.seed(42)
+    X_train = np.random.uniform(1, 10, (500, 5))
+    y_train = (
+        0.30 * X_train[:, 0] +
+        0.20 * X_train[:, 1] +
+        0.15 * X_train[:, 2] +
+        0.20 * X_train[:, 3] +
+        0.15 * X_train[:, 4]
+    )
 
-model = RandomForestRegressor(
-    n_estimators=300,
-    random_state=42
-)
+    model = RandomForestRegressor(n_estimators=300, random_state=42)
+    model.fit(X_train, y_train)
 
-model.fit(X_train,y_train)
+    final_score = float(model.predict(X_input)[0])
+    final_score = max(1, min(10, final_score))
+    final_score = round(final_score, 2)
+    return final_score
 
-# -------------------------------
-# Predict Final Score
-# -------------------------------
 
-final_score = model.predict(X_input)[0]
+def _recommendation_from_score(score):
+    if score < 2.5:
+        return "STRONG SELL"
+    if score < 5:
+        return "SELL / WAIT"
+    if score < 7.5:
+        return "HOLD / MAY BUY"
+    if score < 9:
+        return "BUY"
+    return "STRONG BUY"
 
-final_score = max(1,min(10,final_score))
 
-final_score = round(final_score,2)
+if __name__ == '__main__':
+    specs = [
+        {
+            'name': 'Graph',
+            'modules': ['GraphAnalyzer'],
+            'attrs': ['trend_score', 'graph_score', 'final_score', 'score'],
+            'default': 8.0
+        },
+        {
+            'name': 'Profile',
+            'modules': ['CompanyProfileAnalyzer'],
+            'attrs': ['final_score', 'profile_score', 'company_score', 'score'],
+            'default': 7.9
+        },
+        {
+            'name': 'PriceMarket',
+            'modules': ['PriceAndMarketDataAnalyzer', 'PeiceAndMarketDataAnalyzer', 'MarketAnalyzer'],
+            'attrs': ['score', 'market_score', 'final_score'],
+            'default': 6.5
+        },
+        {
+            'name': 'Valuation',
+            'modules': ['ValuationMetricsAnalyzer', 'ValuationAnalyzer'],
+            'attrs': ['score', 'valuation_score', 'final_score'],
+            'default': 7.3
+        },
+        {
+            'name': 'News',
+            'modules': ['NewsAnalyzer'],
+            'attrs': ['news_score', 'sentiment_score', 'final_score', 'score'],
+            'default': 5.9
+        }
+    ]
 
-print("Final EquityIQ Score:", final_score)
+    print("Running analyzers in parallel (each analyzer runs in its own process)...")
+    start = time.time()
+    scores, errors = _collect_scores(specs, timeout_per=180)
+    elapsed = time.time() - start
+    print(f"All analyzers finished (elapsed {elapsed:.1f}s).\n")
 
-# -------------------------------
-# Recommendation Logic
-# -------------------------------
+    print("Analyzer results:")
+    for k, v in scores.items():
+        print(f"- {k}: {v}")
 
-if final_score < 2.5:
-    recommendation = "STRONG SELL"
-
-elif final_score < 5:
-    recommendation = "SELL / WAIT"
-
-elif final_score < 7.5:
-    recommendation = "HOLD / MAY BUY"
-
-elif final_score < 9:
-    recommendation = "BUY"
-
-else:
-    recommendation = "STRONG BUY"
-
-print("Recommendation:", recommendation)
+    final_score = _compute_final_score(scores)
+    print("\nFinal EquityIQ Score:", final_score)
+    recommendation = _recommendation_from_score(final_score)
+    print("Recommendation:", recommendation)
