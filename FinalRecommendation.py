@@ -5,26 +5,35 @@ from sklearn.ensemble import RandomForestRegressor
 # Pull scores from analyzer modules
 # -------------------------------
 
-def _get_score(module_name, attr_candidates, default):
-    try:
-        mod = __import__(module_name)
-    except Exception as e:
-        print(f"Warning: couldn't import {module_name}: {e}")
-        return float(default)
-    for attr in attr_candidates:
-        if hasattr(mod, attr):
-            try:
-                return float(getattr(mod, attr))
-            except Exception:
-                continue
-    print(f"Warning: {module_name} has no attributes {attr_candidates}; using default {default}")
+def _get_score(module_names, attr_candidates, default):
+    # allow a single module name or a list of possible module names
+    if isinstance(module_names, str):
+        module_names = [module_names]
+
+    for module_name in module_names:
+        try:
+            mod = __import__(module_name)
+        except Exception:
+            continue
+
+        for attr in attr_candidates:
+            if hasattr(mod, attr):
+                try:
+                    return float(getattr(mod, attr))
+                except Exception:
+                    continue
+
+        print(f"Warning: {module_name} has no attributes {attr_candidates}; trying next module if available")
+
+    print(f"Warning: couldn't import any of {module_names}; using default {default}")
     return float(default)
 
 # try to read scores from existing analyzer modules; fall back to sensible defaults
 graph_score = _get_score('GraphAnalyzer', ['trend_score', 'graph_score', 'final_score', 'score'], 8.0)
 profile_score = _get_score('CompanyProfileAnalyzer', ['final_score', 'profile_score', 'company_score', 'score'], 7.9)
-market_score = _get_score('MarketAnalyzer', ['market_score', 'final_score', 'score'], 6.5)
-valuation_score = _get_score('ValuationAnalyzer', ['valuation_score', 'final_score', 'score'], 7.3)
+# support both the provided filename and possible alternate names
+market_score = _get_score(['PriceAndMarketDataAnalyzer', 'PeiceAndMarketDataAnalyzer', 'MarketAnalyzer'], ['score', 'market_score', 'final_score'], 6.5)
+valuation_score = _get_score(['ValuationMetricsAnalyzer', 'ValuationAnalyzer'], ['score', 'valuation_score', 'final_score'], 7.3)
 news_score = _get_score('NewsAnalyzer', ['news_score', 'sentiment_score', 'final_score', 'score'], 5.9)
 
 # -------------------------------
