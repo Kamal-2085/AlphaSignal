@@ -1,6 +1,6 @@
 # AlphaSignal
 
-Lightweight analyzers that score a stock across multiple signals and produce a final recommendation.
+AI-driven stock analysis system designed to generate intelligent buy/sell recommendations by combining machine learning models with fuzzy logic. The system analyzes multiple dimensions of a company and market behavior to produce a final recommendation score.
 
 Included scripts
 
