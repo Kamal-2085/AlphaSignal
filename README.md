@@ -1,4 +1,4 @@
-# Stock Price Predictor
+# AlphaSignal
 
 Lightweight analyzers that score a stock across multiple signals and produce a final recommendation.
 
